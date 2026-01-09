@@ -39,19 +39,14 @@ def extract_pdf_text(pdf_file):
 
 
 # =========================
-# FIELD EXTRACTION FROM PDF
+# VERY LIGHT PDF FIELD EXTRACTION
 # =========================
 def extract_fields_from_text(text):
     fields = {}
 
-    patterns = {
-        "company_name": r"Company Name[:\s]+(.+)",
-        "org_number": r"Org(?:anisation)? Number[:\s]+([\d\-]+)",
-    }
-
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        fields[key] = match.group(1).strip() if match else ""
+    # Only org number is realistic to extract reliably
+    org_match = re.search(r"\b\d{9}\b", text)
+    fields["org_number"] = org_match.group(0) if org_match else ""
 
     return fields
 
@@ -92,65 +87,65 @@ def update_excel(template_file, data, summary):
 st.set_page_config(page_title="PDF → Excel (Brreg)", layout="centered")
 st.title("📄➡️📊 PDF → Excel (Brønnøysund)")
 
-pdf_file = st.file_uploader("Upload PDF", type="pdf")
+pdf_file = st.file_uploader("Upload PDF (optional)", type="pdf")
 excel_file = st.file_uploader("Upload Excel template", type="xlsx")
+
 manual_company_name = st.text_input(
-    "Company name (optional – overrides PDF)",
+    "Company name (recommended)",
     placeholder="e.g. Eksempel AS"
 )
 
-if pdf_file and excel_file:
-    if st.button("Extract & Update Excel"):
-        with st.spinner("Processing…"):
+if excel_file and st.button("Extract & Update Excel"):
+    with st.spinner("Processing…"):
 
-            # STEP 1: PDF
+        extracted = {}
+
+        # STEP 1 — PDF (optional)
+        if pdf_file:
             pdf_text = extract_pdf_text(pdf_file)
             extracted = extract_fields_from_text(pdf_text)
 
-            # Use manual company name if provided
-company_name = manual_company_name.strip() if manual_company_name else extracted_fields.get("company_name", "")
-org_number = extracted_fields.get("org_number", "")
+        # STEP 2 — Determine lookup keys
+        company_name = manual_company_name.strip()
+        org_number = extracted.get("org_number", "")
 
+        # STEP 3 — Brønnøysund lookup
+        company_data = None
+        if org_number:
+            company_data = lookup_by_org_number(org_number)
 
-            # STEP 2: Brreg lookup
-            company_data = None
-            if org_number:
-                company_data = lookup_by_org_number(org_number)
+        if not company_data and company_name:
+            company_data = search_company_by_name(company_name)
 
-            if not company_data and company_name:
-                company_data = search_company_by_name(company_name)
+        # STEP 4 — Normalize data
+        if company_data:
+            extracted["company_name"] = company_data.get("navn", "")
+            extracted["org_number"] = company_data.get("organisasjonsnummer", "")
 
-            # STEP 3: Normalize data
-            if company_data:
-                extracted["company_name"] = company_data.get("navn", "")
-                extracted["org_number"] = company_data.get("organisasjonsnummer", "")
+            addr = company_data.get("forretningsadresse") or {}
+            extracted["address"] = " ".join(addr.get("adresse", []))
+            extracted["post_nr"] = addr.get("postnummer", "")
 
-                addr = company_data.get("forretningsadresse") or {}
-                extracted["address"] = " ".join(addr.get("adresse", []))
-                extracted["post_nr"] = addr.get("postnummer", "")
+            nace = company_data.get("naeringskode1", {})
+            extracted["nace_code"] = nace.get("kode", "")
 
-                nace = company_data.get("naeringskode1", {})
-                extracted["nace_code"] = nace.get("kode", "")
+            extracted["homepage"] = company_data.get("hjemmeside", "")
+            extracted["employees"] = company_data.get("antallAnsatte", "")
 
-                extracted["homepage"] = company_data.get("hjemmeside", "")
-                extracted["employees"] = company_data.get("antallAnsatte", "")
+            summary = extracted["company_name"]
+            if nace.get("beskrivelse"):
+                summary += f" – {nace['beskrivelse']}"
+        else:
+            summary = ""
 
-                summary = f"{company_data.get('navn','')}"
-                if nace.get("beskrivelse"):
-                    summary += f" – {nace['beskrivelse']}"
-            else:
-                summary = ""
+        updated_excel = update_excel(excel_file, extracted, summary)
 
-            # STEP 4: Excel
-            updated_excel = update_excel(excel_file, extracted, summary)
+    st.success("Excel updated successfully")
+    st.json(extracted)
 
-        st.success("Excel updated successfully")
-        st.json(extracted)
-
-        st.download_button(
-            "Download updated Excel",
-            data=updated_excel,
-            file_name="updated_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
+    st.download_button(
+        "Download updated Excel",
+        data=updated_excel,
+        file_name="updated_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
