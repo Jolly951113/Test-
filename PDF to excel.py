@@ -1,32 +1,29 @@
 import streamlit as st
 import pdfplumber
 import re
+import requests
 from openpyxl import load_workbook
 from io import BytesIO
-from duckduckgo_search import DDGS
 
 # ---------------------------
-# WEB SEARCH
+# BRØNNØYSUND LOOKUP FUNCTIONS
 # ---------------------------
-def get_company_info_from_web(company_name):
-    if not company_name:
-        return ""
+def lookup_by_org_number(org_number):
+    url = f"https://data.brreg.no/enhetsregisteret/api/enheter/{org_number}"
+    r = requests.get(url)
+    if r.status_code == 200:
+        return r.json()
+    return None
 
-    query = f"{company_name} company business overview"
-    results_text = ""
-
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, max_results=5):
-            results_text += r.get("body", "") + " "
-
-    return results_text.strip()
-
-def create_short_company_summary(text, max_sentences=4):
-    if not text:
-        return ""
-
-    sentences = text.split(". ")
-    return ". ".join(sentences[:max_sentences]).strip()
+def search_company_by_name(name):
+    url = "https://data.brreg.no/enhetsregisteret/api/enheter"
+    params = {"navn": name}
+    r = requests.get(url, params=params)
+    if r.status_code == 200:
+        data = r.json()
+        if "_embedded" in data and data["_embedded"].get("enheter"):
+            return data["_embedded"]["enheter"][0]
+    return None
 
 # ---------------------------
 # STREAMLIT SETUP
@@ -47,21 +44,14 @@ def extract_pdf_text(pdf_file):
     return text
 
 # ---------------------------
-# FIELD EXTRACTION
+# FIND COMPANY IN PDF
 # ---------------------------
-def extract_fields_from_text(text):
+def extract_company_from_pdf(text):
     fields = {}
 
     patterns = {
         "company_name": r"Company Name[:\s]+(.+)",
         "org_number": r"Org(?:anisation)? Number[:\s]+([\d\-]+)",
-        "address": r"Address[:\s]+(.+)",
-        "post_nr": r"Post(?:al)? Code[:\s]+(\d+)",
-        "nace_code": r"NACE(?: Code)?[:\s]+([\d\.]+)",
-        "turnover_2024": r"Turnover 2024[:\s]+([\d\s,\.]+)",
-        "homepage": r"(?:Website|Homepage)[:\s]+(\S+)",
-        "employees": r"(?:Employees|Number of Employees)[:\s]+(\d+)",
-        "email": r"Email[:\s]+([\w\.-]+@[\w\.-]+)"
     }
 
     for key, pattern in patterns.items():
@@ -73,7 +63,7 @@ def extract_fields_from_text(text):
 # ---------------------------
 # EXCEL UPDATE
 # ---------------------------
-def update_excel(template_file, extracted_data, company_summary):
+def update_excel(template_file, data, company_summary):
     wb = load_workbook(template_file)
     ws = wb.active
 
@@ -89,11 +79,9 @@ def update_excel(template_file, extracted_data, company_summary):
     }
 
     for field, cell in cell_mapping.items():
-        value = extracted_data.get(field)
-        if value:
-            ws[cell] = value
+        if data.get(field):
+            ws[cell] = data[field]
 
-    # Kort info om företaget
     if company_summary:
         ws["B10"] = f"Kort info om företaget:\n{company_summary}"
 
@@ -114,12 +102,44 @@ if pdf_file and excel_file:
 
             # STEP 1 — PDF
             pdf_text = extract_pdf_text(pdf_file)
-            extracted_fields = extract_fields_from_text(pdf_text)
+            extracted_fields = extract_company_from_pdf(pdf_text)
 
-            # STEP 2 — WEB
             company_name = extracted_fields.get("company_name", "")
-            web_text = get_company_info_from_web(company_name)
-            company_summary = create_short_company_summary(web_text)
+            org_number = extracted_fields.get("org_number", "")
+
+            # STEP 2 — BRØNNØYSUND
+            company_data = None
+
+            if org_number:
+                company_data = lookup_by_org_number(org_number)
+
+            if not company_data and company_name:
+                company_data = search_company_by_name(company_name)
+
+            company_summary = ""
+
+            if company_data:
+                extracted_fields["company_name"] = company_data.get("navn", "")
+                extracted_fields["org_number"] = company_data.get("organisasjonsnummer", "")
+
+                addr = company_data.get("forretningsadresse") or {}
+                extracted_fields["address"] = " ".join(addr.get("adresse", []))
+                extracted_fields["post_nr"] = addr.get("postnummer", "")
+
+                nace = company_data.get("naeringskode1", {})
+                extracted_fields["nace_code"] = nace.get("kode", "")
+
+                extracted_fields["homepage"] = company_data.get("hjemmeside", "")
+                extracted_fields["employees"] = company_data.get("antallAnsatte", "")
+
+                # Simple official summary
+                summary_parts = []
+                if company_data.get("navn"):
+                    summary_parts.append(company_data["navn"])
+                if nace.get("beskrivelse"):
+                    summary_parts.append(nace["beskrivelse"])
+
+                company_summary = " – ".join(summary_parts)
 
             # STEP 3 — EXCEL
             updated_excel = update_excel(
@@ -133,8 +153,8 @@ if pdf_file and excel_file:
         st.json(extracted_fields)
 
         st.download_button(
-            label="Download updated Excel file",
-            data=updated_excel,
-            file_name="updated_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "Download updated Excel file",
+            updated_excel,
+            "updated_template.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
