@@ -53,12 +53,18 @@ def extract_fields_from_text(text):
     fields = {}
 
     patterns = {
-        "company_name": r"Company Name[:\s]+(.+)",
-        "org_number": r"Org(?:anisation)? Number[:\s]+([\d\-]+)",
-        "address": r"Address[:\s]+(.+)",
-        "city": r"City[:\s]+(.+)",
-        "email": r"Email[:\s]+([\w\.-]+@[\w\.-]+)"
-    }
+    "Company_name": r"Company Name[:\s]+(.+)",
+    "Org_number": r"Org(?:anisation)? Number[:\s]+([\d\-]+)",
+    "Address": r"Address[:\s]+(.+)",
+    "Post_nr": r"Post(?:al)? Code[:\s]+(\d+)",
+    "city": r"City[:\s]+(.+)",
+    "NACE-kode": r"NACE(?: Code)?[:\s]+([\d\.]+)",
+    "Omsetning_2024": r"Turnover 2024[:\s]+([\d\s,\.]+)",
+    "Hjemmeside": r"(?:Website|Homepage)[:\s]+(\S+)",
+    "Number_of_Employees": r"(?:Employees|Number of Employees)[:\s]+(\d+)",
+    "email": r"Email[:\s]+([\w\.-]+@[\w\.-]+)"
+}
+
 
     for key, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE)
@@ -69,22 +75,30 @@ def extract_fields_from_text(text):
 # ---------------------------
 # EXCEL UPDATE LOGIC
 # ---------------------------
-def update_excel(template_file, extracted_data):
+def update_excel(template_file, extracted_data, company_summary):
+
     wb = load_workbook(template_file)
     ws = wb.active  # CHANGE SHEET NAME IF NEEDED
 
     # 🔴 MAP DATA → CELLS (EDIT THIS)
     cell_mapping = {
-        "company_name": "B2",
-        "org_number": "B3",
-        "address": "B4",
-        "city": "B5",
-        "email": "B6"
+        "Company_name": "B14",
+        "Org_number": "B15",
+        "Address": "B16",
+        "Post-nr": "B17",
+        "NACE-kode": "B18",
+        "Omsetning_2024": "B19",
+        "Hjemmeside": "B21",
+        "Number_of_Employees": "B22",
     }
 
     for field, cell in cell_mapping.items():
         if extracted_data.get(field):
             ws[cell] = extracted_data[field]
+
+    # Kort info om företaget
+if company_summary:
+    ws["B10"] = f"Kort info om företaget:\n{company_summary}"
 
     output = BytesIO()
     wb.save(output)
