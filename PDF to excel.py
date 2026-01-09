@@ -78,9 +78,23 @@ excel_file = st.file_uploader("Upload Excel Template", type=["xlsx"])
 if pdf_file and excel_file:
     if st.button("Extract & Update Excel"):
         with st.spinner("Processing..."):
-            pdf_text = extract_pdf_text(pdf_file)
-            extracted_fields = extract_fields_from_text(pdf_text)
-            updated_excel = update_excel(excel_file, extracted_fields)
+            
+# STEP 1 — PDF extraction
+pdf_text = extract_pdf_text(pdf_file)
+extracted_fields = extract_fields_from_text(pdf_text)
+
+# STEP 2 — Web search
+company_name = extracted_fields.get("company_name", "")
+web_text = get_company_info_from_web(company_name)
+company_summary = create_short_company_summary(web_text)
+
+# STEP 3 — Write to Excel
+updated_excel = update_excel(
+    excel_file,
+    extracted_fields,
+    company_summary
+)
+
 
         st.success("Excel updated successfully!")
 
