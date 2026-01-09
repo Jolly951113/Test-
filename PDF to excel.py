@@ -94,6 +94,10 @@ st.title("📄➡️📊 PDF → Excel (Brønnøysund)")
 
 pdf_file = st.file_uploader("Upload PDF", type="pdf")
 excel_file = st.file_uploader("Upload Excel template", type="xlsx")
+manual_company_name = st.text_input(
+    "Company name (optional – overrides PDF)",
+    placeholder="e.g. Eksempel AS"
+)
 
 if pdf_file and excel_file:
     if st.button("Extract & Update Excel"):
@@ -103,8 +107,10 @@ if pdf_file and excel_file:
             pdf_text = extract_pdf_text(pdf_file)
             extracted = extract_fields_from_text(pdf_text)
 
-            company_name = extracted.get("company_name", "")
-            org_number = extracted.get("org_number", "")
+            # Use manual company name if provided
+company_name = manual_company_name.strip() if manual_company_name else extracted_fields.get("company_name", "")
+org_number = extracted_fields.get("org_number", "")
+
 
             # STEP 2: Brreg lookup
             company_data = None
