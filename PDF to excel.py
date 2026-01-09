@@ -5,35 +5,29 @@ import requests
 from openpyxl import load_workbook
 from io import BytesIO
 
-# ---------------------------
-# BRØNNØYSUND LOOKUP FUNCTIONS
-# ---------------------------
+# =========================
+# BRØNNØYSUND API
+# =========================
 def lookup_by_org_number(org_number):
     url = f"https://data.brreg.no/enhetsregisteret/api/enheter/{org_number}"
-    r = requests.get(url)
-    if r.status_code == 200:
-        return r.json()
-    return None
+    r = requests.get(url, timeout=10)
+    return r.json() if r.status_code == 200 else None
+
 
 def search_company_by_name(name):
     url = "https://data.brreg.no/enhetsregisteret/api/enheter"
     params = {"navn": name}
-    r = requests.get(url, params=params)
+    r = requests.get(url, params=params, timeout=10)
     if r.status_code == 200:
         data = r.json()
         if "_embedded" in data and data["_embedded"].get("enheter"):
             return data["_embedded"]["enheter"][0]
     return None
 
-# ---------------------------
-# STREAMLIT SETUP
-# ---------------------------
-st.set_page_config(page_title="PDF → Excel Mapper", layout="centered")
-st.title("📄➡️📊 PDF to Pre-Made Excel Template")
 
-# ---------------------------
+# =========================
 # PDF TEXT EXTRACTION
-# ---------------------------
+# =========================
 def extract_pdf_text(pdf_file):
     text = ""
     with pdfplumber.open(pdf_file) as pdf:
@@ -43,10 +37,11 @@ def extract_pdf_text(pdf_file):
                 text += page_text + "\n"
     return text
 
-# ---------------------------
-# FIND COMPANY IN PDF
-# ---------------------------
-def extract_company_from_pdf(text):
+
+# =========================
+# FIELD EXTRACTION FROM PDF
+# =========================
+def extract_fields_from_text(text):
     fields = {}
 
     patterns = {
@@ -60,10 +55,11 @@ def extract_company_from_pdf(text):
 
     return fields
 
-# ---------------------------
+
+# =========================
 # EXCEL UPDATE
-# ---------------------------
-def update_excel(template_file, data, company_summary):
+# =========================
+def update_excel(template_file, data, summary):
     wb = load_workbook(template_file)
     ws = wb.active
 
@@ -73,7 +69,6 @@ def update_excel(template_file, data, company_summary):
         "address": "B16",
         "post_nr": "B17",
         "nace_code": "B18",
-        "turnover_2024": "B19",
         "homepage": "B21",
         "employees": "B22",
     }
@@ -82,79 +77,74 @@ def update_excel(template_file, data, company_summary):
         if data.get(field):
             ws[cell] = data[field]
 
-    if company_summary:
-        ws["B10"] = f"Kort info om företaget:\n{company_summary}"
+    if summary:
+        ws["B10"] = f"Kort info om företaget:\n{summary}"
 
     output = BytesIO()
     wb.save(output)
     output.seek(0)
     return output
 
-# ---------------------------
-# UI
-# ---------------------------
+
+# =========================
+# STREAMLIT UI
+# =========================
+st.set_page_config(page_title="PDF → Excel (Brreg)", layout="centered")
+st.title("📄➡️📊 PDF → Excel (Brønnøysund)")
+
 pdf_file = st.file_uploader("Upload PDF", type="pdf")
-excel_file = st.file_uploader("Upload Excel Template", type=["xlsx"])
+excel_file = st.file_uploader("Upload Excel template", type="xlsx")
 
 if pdf_file and excel_file:
     if st.button("Extract & Update Excel"):
-        with st.spinner("Processing..."):
+        with st.spinner("Processing…"):
 
-            # STEP 1 — PDF
+            # STEP 1: PDF
             pdf_text = extract_pdf_text(pdf_file)
-            extracted_fields = extract_company_from_pdf(pdf_text)
+            extracted = extract_fields_from_text(pdf_text)
 
-            company_name = extracted_fields.get("company_name", "")
-            org_number = extracted_fields.get("org_number", "")
+            company_name = extracted.get("company_name", "")
+            org_number = extracted.get("org_number", "")
 
-            # STEP 2 — BRØNNØYSUND
+            # STEP 2: Brreg lookup
             company_data = None
-
             if org_number:
                 company_data = lookup_by_org_number(org_number)
 
             if not company_data and company_name:
                 company_data = search_company_by_name(company_name)
 
-            company_summary = ""
-
+            # STEP 3: Normalize data
             if company_data:
-                extracted_fields["company_name"] = company_data.get("navn", "")
-                extracted_fields["org_number"] = company_data.get("organisasjonsnummer", "")
+                extracted["company_name"] = company_data.get("navn", "")
+                extracted["org_number"] = company_data.get("organisasjonsnummer", "")
 
                 addr = company_data.get("forretningsadresse") or {}
-                extracted_fields["address"] = " ".join(addr.get("adresse", []))
-                extracted_fields["post_nr"] = addr.get("postnummer", "")
+                extracted["address"] = " ".join(addr.get("adresse", []))
+                extracted["post_nr"] = addr.get("postnummer", "")
 
                 nace = company_data.get("naeringskode1", {})
-                extracted_fields["nace_code"] = nace.get("kode", "")
+                extracted["nace_code"] = nace.get("kode", "")
 
-                extracted_fields["homepage"] = company_data.get("hjemmeside", "")
-                extracted_fields["employees"] = company_data.get("antallAnsatte", "")
+                extracted["homepage"] = company_data.get("hjemmeside", "")
+                extracted["employees"] = company_data.get("antallAnsatte", "")
 
-                # Simple official summary
-                summary_parts = []
-                if company_data.get("navn"):
-                    summary_parts.append(company_data["navn"])
+                summary = f"{company_data.get('navn','')}"
                 if nace.get("beskrivelse"):
-                    summary_parts.append(nace["beskrivelse"])
+                    summary += f" – {nace['beskrivelse']}"
+            else:
+                summary = ""
 
-                company_summary = " – ".join(summary_parts)
+            # STEP 4: Excel
+            updated_excel = update_excel(excel_file, extracted, summary)
 
-            # STEP 3 — EXCEL
-            updated_excel = update_excel(
-                excel_file,
-                extracted_fields,
-                company_summary
-            )
-
-        st.success("Excel updated successfully!")
-        st.subheader("Extracted data")
-        st.json(extracted_fields)
+        st.success("Excel updated successfully")
+        st.json(extracted)
 
         st.download_button(
-            "Download updated Excel file",
-            updated_excel,
-            "updated_template.xlsx",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            "Download updated Excel",
+            data=updated_excel,
+            file_name="updated_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
