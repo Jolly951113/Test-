@@ -49,7 +49,7 @@ def extract_fields_from_text(text):
 # ---------------------------
 def update_excel(template_file, extracted_data):
     wb = load_workbook(template_file)
-    ws = wb["Sheet1"]  # CHANGE SHEET NAME IF NEEDED
+    ws = wb.active  # CHANGE SHEET NAME IF NEEDED
 
     # 🔴 MAP DATA → CELLS (EDIT THIS)
     cell_mapping = {
