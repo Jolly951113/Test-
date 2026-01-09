@@ -1,8 +1,30 @@
 import streamlit as st
 import pdfplumber
 import re
+
 from openpyxl import load_workbook
 from io import BytesIO
+from duckduckgo_search import DDGS
+def get_company_info_from_web(company_name):
+    if not company_name:
+        return ""
+
+    query = f"{company_name} company business overview"
+    results_text = ""
+
+    with DDGS() as ddgs:
+        for r in ddgs.text(query, max_results=5):
+            results_text += r.get("body", "") + " "
+
+    return results_text.strip()
+
+def create_short_company_summary(text, max_sentences=4):
+    if not text:
+        return ""
+
+    sentences = text.split(". ")
+    return ". ".join(sentences[:max_sentences]).strip()
+
 
 st.set_page_config(page_title="PDF → Excel Mapper", layout="centered")
 
